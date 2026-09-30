@@ -1,0 +1,459 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbtile.com/schemas/adapter-protocol/v1.json",
+  "title": "Orbtile Adapter Protocol v1",
+  "description": "Off by default: the user turns it on in Orbtile › Settings › Agents › Adapter API. Request and response bodies of the local Orbtile Adapter API. Transport: HTTP/1.1 over the Unix-domain socket named by `socketPath` in the discovery file (~/Library/Application Support/Orbtile/adapter-api.json). Request target = `basePath` from the same file (\"/a/v1\") + the endpoint path; Host: localhost. All requests: Content-Type: application/json, Authorization: Bearer <token from the discovery file>, no Origin header. Servers ignore unknown request fields and report them in `warnings`; clients ignore unknown response fields.",
+  "$defs": {
+    "AdapterID": {
+      "description": "Reverse-DNS id owned by the adapter author. Lowercase, at least one dot, 3..64 bytes. Ids without a dot are reserved for built-in adapters; com.orbtile.* is reserved.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*(\\.[a-z0-9]+(-[a-z0-9]+)*)+$",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "SessionID": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "Activity": {
+      "description": "Orbtile orb states. 'empty' is renderer-internal and is rejected.",
+      "enum": [
+        "starting",
+        "idle",
+        "thinking",
+        "tool",
+        "streaming",
+        "waitingPermission",
+        "waitingQuestion",
+        "done",
+        "error",
+        "compacting",
+        "offline"
+      ]
+    },
+    "Glyph": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "description": "SF Symbol name shown in Settings and the popover.",
+          "type": "string",
+          "pattern": "^[a-z0-9.]{1,64}$"
+        },
+        "monogram": {
+          "description": "1-2 characters, used when the symbol is missing or unknown.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2
+        }
+      },
+      "minProperties": 1
+    },
+    "Palette": {
+      "description": "The adapter's palette. Orbtile generates every per-session colour (key ramps, accents, popover chips) from it. The user can override baseHue in Settings. The error colours and the neutrals are fixed: they are the same for every adapter.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseHue"
+      ],
+      "properties": {
+        "baseHue": {
+          "description": "OKLCH hue (degrees) of the working orb. Hues inside the reserved arc 345.9..75.9 (within 45 degrees of the error hue 30.9) are moved to the nearer edge (345.9 or 75.9) and reported in `warnings`. Avoid 205..215: the waiting colour changes direction at 210.9, so pick one side.",
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 360
+        },
+        "chroma": {
+          "description": "Colourfulness multiplier for the adapter and waiting families. Default 1.",
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 1.3
+        },
+        "lightness": {
+          "description": "OKLab L shift of the lit stops of the adapter family. The deep stop never moves. Default 0.",
+          "type": "number",
+          "minimum": -0.05,
+          "maximum": 0.05
+        },
+        "attentionHue": {
+          "description": "Optional OKLCH hue (degrees) of the waitingPermission orb. Omit to derive it from baseHue. Base hues about 115..235 should set it to an alarm hue (280 through 0 to 76). Hues inside 18.9..55 move to the nearer edge. Built-in waiting colours are about 43, 306 and 355 degrees. Every alarm-arc hue currently triggers a proximity warning; the widest gaps are about 72..75, 330 and 16..18.",
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 360
+        }
+      }
+    },
+    "AdapterRegistration": {
+      "description": "PUT /adapters/{adapterId}",
+      "type": "object",
+      "required": [
+        "name",
+        "palette"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "shortName": {
+          "description": "Badge text, defaults to name.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12
+        },
+        "palette": {
+          "$ref": "#/$defs/Palette"
+        },
+        "glyph": {
+          "$ref": "#/$defs/Glyph"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "homepage": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "maxLength": 512
+        },
+        "urlSchemes": {
+          "description": "Schemes this adapter may use in session openURL. 'file', 'javascript', 'data', 'orbtile' and 'x-apple.systempreferences' are always refused.",
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9+.-]{0,31}$"
+          }
+        }
+      }
+    },
+    "Message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "description": "Identity of the text; a new id restarts the typewriter.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "text": {
+          "description": "Whole latest assistant text; the server keeps the last 4096 bytes.",
+          "type": "string",
+          "maxLength": 16384
+        }
+      }
+    },
+    "SessionUpdate": {
+      "description": "POST /adapters/{adapterId}/sessions/{sessionId}. Merge semantics: an absent field keeps its value, null clears it. 'title' and 'activity' are required when the session does not exist yet.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "activity": {
+          "$ref": "#/$defs/Activity"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "toolLabel": {
+          "description": "Shown while activity is 'tool'.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "toolKind": {
+          "description": "Tool motion while activity is 'tool'. Unknown values count as none (a warning).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 32,
+          "examples": [
+            "shell",
+            "edit",
+            "read",
+            "web",
+            "delegate",
+            "plan",
+            "integration",
+            "other"
+          ]
+        },
+        "message": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Message"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "statusDetail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "subagentCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99
+        },
+        "host": {
+          "description": "'local' (default) or an ssh-style alias.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        "openURL": {
+          "description": "Opened when the user taps the key. Scheme must be declared in urlSchemes.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri",
+          "maxLength": 2048
+        },
+        "pid": {
+          "description": "Local process of the session; Orbtile activates its GUI ancestor on tap. Must belong to the calling user.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "background": {
+          "type": "boolean"
+        },
+        "liveText": {
+          "description": "false = state only; no live assistant text.",
+          "type": "boolean"
+        },
+        "ttlSeconds": {
+          "description": "No update or heartbeat for this long = offline; removed 600 s later. Default 120.",
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 3600
+        }
+      }
+    },
+    "SessionBatch": {
+      "description": "PUT /adapters/{adapterId}/sessions: full replace. Sessions of this adapter not listed are ended.",
+      "type": "object",
+      "required": [
+        "sessions"
+      ],
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/SessionUpdate"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "title",
+                  "activity"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/SessionID"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "RegistrationReply": {
+      "type": "object",
+      "required": [
+        "adapter",
+        "enabled"
+      ],
+      "properties": {
+        "adapter": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/AdapterID"
+            },
+            "palette": {
+              "description": "Effective palette: the user's baseHue override, or the registered value.",
+              "$ref": "#/$defs/Palette"
+            },
+            "resolvedBaseHue": {
+              "description": "The base hue the generator uses, after the reserved-arc push.",
+              "type": "number"
+            }
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "Why not enabled.",
+          "enum": [
+            "awaiting_user",
+            "disabled_by_user"
+          ]
+        },
+        "warnings": {
+          "description": "Unknown request fields, the reserved-arc push, and the palette generator's notes (gamut clips, salience guard, WCAG lifts).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "SessionReply": {
+      "type": "object",
+      "required": [
+        "session"
+      ],
+      "properties": {
+        "session": {
+          "type": "object",
+          "properties": {
+            "uid": {
+              "type": "string"
+            },
+            "visible": {
+              "type": "boolean"
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "Info": {
+      "description": "GET /info. With request header X-Orbtile-Nonce (16..64 hex chars) the reply carries proof = hex(HMAC-SHA256(key: token, message: nonce)), which only the real Orbtile can compute.",
+      "type": "object",
+      "required": [
+        "server",
+        "api",
+        "version",
+        "activities",
+        "limits"
+      ],
+      "properties": {
+        "server": {
+          "const": "orbtile"
+        },
+        "api": {
+          "const": 1
+        },
+        "version": {
+          "type": "string"
+        },
+        "activities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Activity"
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "maxBodyBytes": {
+              "const": 65536
+            },
+            "maxSessionsPerAdapter": {
+              "const": 32
+            },
+            "maxAdapters": {
+              "const": 8
+            },
+            "requestsPerSecond": {
+              "const": 20
+            },
+            "burst": {
+              "const": 60
+            }
+          }
+        },
+        "proof": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "bad_request",
+                "invalid_field",
+                "unauthorized",
+                "forbidden_origin",
+                "not_found",
+                "adapter_not_registered",
+                "reserved_id",
+                "length_required",
+                "payload_too_large",
+                "unsupported_media_type",
+                "limit_exceeded",
+                "rate_limited",
+                "api_disabled",
+                "internal"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "field": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
