@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://orbtile.com/schemas/adapter-protocol/v1.json",
-  "title": "Orbtile Adapter Protocol v1",
-  "description": "Off by default: the user turns it on in Orbtile › Settings › Agents › Adapter API. Request and response bodies of the local Orbtile Adapter API. Transport: HTTP/1.1 over the Unix-domain socket named by `socketPath` in the discovery file (~/Library/Application Support/Orbtile/adapter-api.json). Request target = `basePath` from the same file (\"/a/v1\") + the endpoint path; Host: localhost. All requests: Content-Type: application/json, Authorization: Bearer <token from the discovery file>, no Origin header. Servers ignore unknown request fields and report them in `warnings`; clients ignore unknown response fields.",
+  "title": "Orbtile Adapter Protocol v1.2",
+  "description": "Off by default: the user turns it on in Orbtile › Settings › Agents › Adapter API. Request and response bodies of the local Orbtile Adapter API. Transport: HTTP/1.1 over the Unix-domain socket named by `socketPath` in the discovery file (~/Library/Application Support/Orbtile/adapter-api.json). Request target = `basePath` from the same file (\"/a/v1\") + the endpoint path; Host: localhost. All requests: Content-Type: application/json, Authorization: Bearer <token from the discovery file>, no Origin header. Servers ignore unknown request fields and report them in `warnings`; clients ignore unknown response fields. v1.1 adds optional event capabilities. v1.2 adds optional adapter icons and per-state colours. Interactive registration returns adapterToken in its JSON reply; send it as X-Orbtile-Adapter-Token on every adapter route. GET /info advertises apiMinor: 2. v1.0 and v1.1 registrations remain valid.",
   "$defs": {
     "AdapterID": {
       "description": "Reverse-DNS id owned by the adapter author. Lowercase, at least one dot, 3..64 bytes. Ids without a dot are reserved for built-in adapters; com.orbtile.* is reserved.",
@@ -49,8 +49,57 @@
       },
       "minProperties": 1
     },
+    "Icon": {
+      "description": "Optional adapter icon. Supply PNG data, a macOS app bundle id, or both. Null or omission uses the glyph. Orbtile validates PNG bytes and dimensions, then re-encodes 28x28 and 56x56 sRGB icons of at most 16384 bytes each.",
+      "type": "object",
+      "properties": {
+        "png": {
+          "description": "Standard RFC 4648 base64 without whitespace. 1..43696 ASCII characters decode to 1..32768 PNG bytes. The PNG must have square IHDR dimensions from 16 through 256 pixels.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 43696,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          "contentEncoding": "base64"
+        },
+        "appBundleId": {
+          "description": "Installed macOS app bundle identifier. On macOS it takes precedence when resolved; PNG is the fallback and the cross-platform icon.",
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$"
+        }
+      },
+      "anyOf": [
+        {"required": ["png"]},
+        {"required": ["appBundleId"]}
+      ]
+    },
+    "StateColours": {
+      "description": "One to ten adapter-selected sRGB state colours. error and empty are not allowed. thinking supplies omitted tool and streaming colours; waitingPermission supplies omitted waitingQuestion. A user hue replaces all adapter state colours; anchorAttention ignores both waiting overrides.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 10,
+      "propertyNames": {
+        "enum": [
+          "idle",
+          "starting",
+          "thinking",
+          "tool",
+          "streaming",
+          "done",
+          "compacting",
+          "offline",
+          "waitingPermission",
+          "waitingQuestion"
+        ]
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}$"
+      }
+    },
     "Palette": {
-      "description": "The adapter's palette. Orbtile generates every per-session colour (key ramps, accents, popover chips) from it. The user can override baseHue in Settings. The error colours and the neutrals are fixed: they are the same for every adapter.",
+      "description": "The adapter's palette. Orbtile generates per-session colours from baseHue and optional per-state colours. A user baseHue override in Settings replaces palette.states. The error colours and the neutrals are fixed: they are the same for every adapter.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -64,7 +113,7 @@
           "exclusiveMaximum": 360
         },
         "chroma": {
-          "description": "Colourfulness multiplier for the adapter and waiting families. Default 1.",
+          "description": "Colourfulness multiplier for generated adapter and waiting colours. Explicit palette.states entries use their own chroma ratio instead. Default 1.",
           "type": "number",
           "minimum": 0.5,
           "maximum": 1.3
@@ -76,10 +125,17 @@
           "maximum": 0.05
         },
         "attentionHue": {
-          "description": "Optional OKLCH hue (degrees) of the waitingPermission orb. Omit to derive it from baseHue. Base hues about 115..235 should set it to an alarm hue (280 through 0 to 76). Hues inside 18.9..55 move to the nearer edge. Built-in waiting colours are about 43, 306 and 355 degrees. Every alarm-arc hue currently triggers a proximity warning; the widest gaps are about 72..75, 330 and 16..18.",
+          "description": "Optional OKLCH hue (degrees) of the waitingPermission orb, the adapter's alarm colour. Omit it to derive waiting from baseHue. Set it when the generator's `attention:` note says the derived waiting colour is in the calm arc (base hues about 115..235). Hues inside 18.9..55 (the error hue up to past Claude's terracotta) are moved to the nearer edge. Stay in the alarm arc (280 -> 0 -> 76, clear of Claude gold) and away from the built-in waiting colours: Claude terracotta (about 43), Codex violet (about 306), ZCode rose (355). Every alarm-arc hue is currently under 10 deltaE_OK x100 from one of them, so expect a `proximity:` warning; the widest gaps are about 72..75, 330 and 16..18.",
           "type": "number",
           "minimum": 0,
           "exclusiveMaximum": 360
+        },
+        "states": {
+          "description": "Optional v1.2 state colours. Null or omission keeps generated v1.0/v1.1 behaviour; an empty object is invalid.",
+          "oneOf": [
+            {"$ref": "#/$defs/StateColours"},
+            {"type": "null"}
+          ]
         }
       }
     },
@@ -108,6 +164,13 @@
         "glyph": {
           "$ref": "#/$defs/Glyph"
         },
+        "icon": {
+          "description": "Optional v1.2 adapter icon. Re-registering with null or omitting icon clears a previous custom icon.",
+          "oneOf": [
+            {"$ref": "#/$defs/Icon"},
+            {"type": "null"}
+          ]
+        },
         "version": {
           "type": "string",
           "maxLength": 32
@@ -127,8 +190,50 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9+.-]{0,31}$"
           }
+        },
+        "capabilities": {
+          "description": "Optional v1.1 event capabilities. Empty by default; declaring approvals/questions does not enable keypad decisions: the user must opt in separately under Settings > Agents > Keypad.",
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "tap",
+              "approvals",
+              "questions"
+            ]
+          }
+        },
+        "tapBehavior": {
+          "description": "alsoOpen (default) emits tap and also opens registered URL/app. eventOnly emits tap without opening. User tap preferences still apply.",
+          "enum": [
+            "alsoOpen",
+            "eventOnly"
+          ],
+          "default": "alsoOpen"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "tapBehavior"
+            ]
+          },
+          "then": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "contains": {
+                  "const": "tap"
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "Message": {
       "type": "object",
@@ -169,6 +274,15 @@
             "null"
           ],
           "maxLength": 1024
+        },
+        "project": {
+          "description": "Optional per-session Project group (Orbtile 0.2.17+). Display text is cleaned and trimmed before checking 1...128 Unicode scalars. Overrides cwd for Project grouping within the session host; null restores cwd fallback. Additive and v1-compatible.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
         },
         "model": {
           "type": [
@@ -251,7 +365,7 @@
           "type": "boolean"
         },
         "liveText": {
-          "description": "false = state only; no live assistant text.",
+          "description": "false = state only (shown like Claude registry-only sessions).",
           "type": "boolean"
         },
         "ttlSeconds": {
@@ -259,6 +373,28 @@
           "type": "integer",
           "minimum": 10,
           "maximum": 3600
+        },
+        "approval": {
+          "description": "Optional v1.1 pending request, null clears. Exactly one approval or question per session; at most 32 pending requests per adapter.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ApprovalRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "question": {
+          "description": "Optional v1.1 pending request, null clears. Exactly one approval or question per session; at most 32 pending requests per adapter.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/QuestionRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -321,6 +457,10 @@
         "enabled": {
           "type": "boolean"
         },
+        "keypadDecisions": {
+          "description": "Whether Orbtile delivers this adapter's keypad approval decisions and question answers at reply time (the user's Approve from the keypad switch for this adapter, Settings > Agents). A snapshot, not a promise: register again to re-read it; the user can turn it off later, which clears queued decisions. Added in Orbtile 0.2.15.",
+          "type": "boolean"
+        },
         "reason": {
           "description": "Why not enabled.",
           "enum": [
@@ -334,6 +474,11 @@
           "items": {
             "type": "string"
           }
+        },
+        "adapterToken": {
+          "description": "Ownership lease for every adapter route including capability downgrade/re-registration; 256-bit base64url. Never log or persist. Ends on unregister, silence, token regeneration or host restart.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
         }
       }
     },
@@ -405,12 +550,30 @@
             },
             "burst": {
               "const": 60
+            },
+            "maxPendingRequestsPerAdapter": {
+              "const": 32
+            },
+            "maxEvents": {
+              "const": 128
+            },
+            "maxRequestIDs": {
+              "const": 4096
+            },
+            "maxLongPolls": {
+              "type": "integer",
+              "const": 4
             }
           }
         },
         "proof": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "apiMinor": {
+          "description": "Additive v1.2 support, including icon and palette.states; discovery still uses api:1 and basePath /a/v1.",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -442,7 +605,10 @@
                 "limit_exceeded",
                 "rate_limited",
                 "api_disabled",
-                "internal"
+                "internal",
+                "invalid_cursor",
+                "events_not_supported",
+                "poll_pending"
               ]
             },
             "message": {
@@ -452,6 +618,278 @@
               "type": "string"
             }
           }
+        }
+      }
+    },
+    "RequestID": {
+      "description": "Fresh within this registration, shared namespace across sessions and request kinds. Reusing a retired id is refused. Identical pending updates never refresh its expiry.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "ApprovalRequest": {
+      "type": "object",
+      "required": [
+        "id",
+        "toolName",
+        "commandSummary"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestID"
+        },
+        "toolName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "commandSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "QuestionOption": {
+      "type": "object",
+      "required": [
+        "label"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      }
+    },
+    "Question": {
+      "type": "object",
+      "required": [
+        "text",
+        "options"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "header": {
+          "type": "string",
+          "maxLength": 12
+        },
+        "multiSelect": {
+          "type": "boolean",
+          "default": false
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          }
+        }
+      }
+    },
+    "QuestionRequest": {
+      "type": "object",
+      "required": [
+        "id",
+        "questions"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestID"
+        },
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/Question"
+          }
+        }
+      }
+    },
+    "EventsPoll": {
+      "description": "POST /adapters/{adapterId}/events. One outstanding poll. Cumulative ack never decreases; ack <= after <= highest sequence previously delivered. Resume with last locally applied sequence; acknowledge only after authoritative UI commit or deliberate stale-event discard.",
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "maximum": 9007199254740991
+        },
+        "ack": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "maximum": 9007199254740991
+        },
+        "waitSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 0
+        }
+      }
+    },
+    "TapEvent": {
+      "type": "object",
+      "required": [
+        "sequence",
+        "type",
+        "sessionId",
+        "host"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionId": {
+          "$ref": "#/$defs/SessionID"
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        "type": {
+          "const": "tap"
+        }
+      }
+    },
+    "ApprovalEvent": {
+      "type": "object",
+      "required": [
+        "sequence",
+        "type",
+        "sessionId",
+        "host",
+        "requestId",
+        "decision",
+        "expiresAt"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionId": {
+          "$ref": "#/$defs/SessionID"
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        "type": {
+          "const": "approval"
+        },
+        "requestId": {
+          "$ref": "#/$defs/RequestID"
+        },
+        "decision": {
+          "enum": [
+            "allow",
+            "deny"
+          ]
+        },
+        "expiresAt": {
+          "description": "Unix epoch seconds. Reject on or after this time and if own-UI request no longer pending.",
+          "type": "number"
+        }
+      }
+    },
+    "QuestionEvent": {
+      "type": "object",
+      "required": [
+        "sequence",
+        "type",
+        "sessionId",
+        "host",
+        "requestId",
+        "picks",
+        "expiresAt"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionId": {
+          "$ref": "#/$defs/SessionID"
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        "type": {
+          "const": "question"
+        },
+        "requestId": {
+          "$ref": "#/$defs/RequestID"
+        },
+        "picks": {
+          "description": "One array per question, containing unique zero-based option indices. Single-select accepts exactly one. Own UI validates against its still-pending options.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            }
+          }
+        },
+        "expiresAt": {
+          "type": "number",
+          "description": "Unix epoch seconds; questions expire after 600 seconds."
+        }
+      }
+    },
+    "EventsReply": {
+      "type": "object",
+      "required": [
+        "events",
+        "lastSequence",
+        "acknowledged"
+      ],
+      "properties": {
+        "events": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/TapEvent"
+              },
+              {
+                "$ref": "#/$defs/ApprovalEvent"
+              },
+              {
+                "$ref": "#/$defs/QuestionEvent"
+              }
+            ]
+          }
+        },
+        "lastSequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "acknowledged": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

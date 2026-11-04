@@ -1,15 +1,21 @@
 #!/bin/bash
-# Orbtile Adapter Protocol v1 — reference adapter in shell + curl.
+# Orbtile Adapter Protocol v1.2 — reference adapter in shell + curl.
+# Its registration intentionally omits the optional v1.2 icon and palette.states fields.
 # Shows one "build" session on the keypad while a command runs:
 #   ref-shell.sh make test
 # Transport: HTTP over the Unix-domain socket named in the discovery file (curl --unix-socket).
 # The token never appears in argv: curl reads it from a process-substitution config
-# written by the printf builtin.
+# written by the printf builtin (review finding P8).
 set -u
 API_FILE="${ORBTILE_API_FILE:-$HOME/Library/Application Support/Orbtile/adapter-api.json}"
+# Without ORBTILE_API_FILE: Orbtile's file, or Orbtile Enterprise's when only that one exists.
+ENTERPRISE_API_FILE="$HOME/Library/Application Support/Orbtile Enterprise/adapter-api.json"
+if [ -z "${ORBTILE_API_FILE:-}" ] && [ ! -e "$API_FILE" ] && [ -e "$ENTERPRISE_API_FILE" ]; then
+  API_FILE="$ENTERPRISE_API_FILE"
+fi
 ID="dev.example.shell"
 SID="build-$$"
-# Green working orb. A base hue in the calm arc needs an alarm colour of its own (see protocol/PALETTE.md).
+# Green working orb. A base hue in the calm arc needs an alarm colour of its own (PALETTE.md §3 rule 5).
 REG='{"name":"Shell","palette":{"baseHue":150,"attentionHue":330},"glyph":{"symbol":"terminal","monogram":"Sh"},"version":"1.0.0"}'
 
 load() {  # reads the discovery file; fails when Orbtile is off or not running
@@ -57,6 +63,7 @@ HB=$!
 
 "$@"; rc=$?
 kill "$HB" 2>/dev/null
+wait "$HB" 2>/dev/null
 
 # Orbtile may have restarted while the command ran (new token, no registrations, no sessions): read the file
 # again, register again and send the whole session, so the final state always arrives.

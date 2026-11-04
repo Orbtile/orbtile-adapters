@@ -1,14 +1,19 @@
-// Orbtile Adapter Protocol v1 — reference adapter in Node (>= 18, no dependencies).
+// Orbtile Adapter Protocol v1.2 — reference adapter in Node (>= 18, no dependencies).
+// Its registration intentionally omits the optional v1.2 icon and palette.states fields.
 // Transport: HTTP/1.1 over the Unix-domain socket named in the discovery file (http.request socketPath).
 // A poller-style adapter: every 5 s it lists its jobs and sends the full set with
 // PUT /sessions (full replace). Jobs that disappear are ended by Orbtile.
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { request } from "node:http";
 import { homedir } from "node:os";
 
+// ORBTILE_API_FILE when set; else Orbtile's file, or Orbtile Enterprise's when only that one exists.
+const SUPPORT = `${homedir()}/Library/Application Support`;
 const API_FILE = process.env.ORBTILE_API_FILE
-  ?? `${homedir()}/Library/Application Support/Orbtile/adapter-api.json`;
+  ?? [`${SUPPORT}/Orbtile/adapter-api.json`, `${SUPPORT}/Orbtile Enterprise/adapter-api.json`].find((f) => existsSync(f))
+  ?? `${SUPPORT}/Orbtile/adapter-api.json`;
 const ID = "dev.example.node";
 let api = null;
 
@@ -67,7 +72,7 @@ async function verify() {
   if (status !== 200 || got.length !== want.length || !timingSafeEqual(got, want)) throw new Error("not Orbtile");
 }
 
-// Magenta working orb with an amber alarm colour (see protocol/PALETTE.md).
+// Magenta working orb; the derived waiting colour would sit on ZCode's rose, so it gets an amber one (PALETTE.md §3).
 const register = () => call("PUT", `/adapters/${ID}`, {
   name: "Node jobs", shortName: "Jobs", palette: { baseHue: 320, attentionHue: 75 },
   glyph: { symbol: "gearshape.2", monogram: "Nj" }, version: "1.0.0",

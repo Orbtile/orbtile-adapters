@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock as mocklib
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
@@ -54,6 +55,8 @@ class AdapterTests(unittest.TestCase):
         mock.TOKEN = secrets.token_urlsafe(32)
         mock.adapters.clear()
         mock.sessions.clear()
+        mock.EVENTS = mock.EventState()
+        mock.DEMO_EVENTS = False
         owner = self
 
         class RecordingHandler(mock.Handler):
@@ -106,6 +109,7 @@ class AdapterTests(unittest.TestCase):
         mock.TOKEN = secrets.token_urlsafe(32)
         mock.adapters.clear()
         mock.sessions.clear()
+        mock.EVENTS = mock.EventState()
         self.write_discovery()
 
     def client(self):
@@ -125,6 +129,82 @@ class AdapterTests(unittest.TestCase):
                 return
             time.sleep(0.01)
         self.assertTrue(condition(), "Fake-server request did not arrive")
+
+    def test_python_v12_info_and_registration(self):
+        client = self.client()
+        status, info, _ = client.call("GET", "/info")
+        self.assertEqual(status, 200)
+        self.assertEqual(info["api"], 1)
+        self.assertEqual(info["apiMinor"], 2)
+        registration = mock.adapters[ref.ADAPTER]
+        self.assertEqual(registration["icon"], {"appBundleId": "com.apple.Terminal"})
+        self.assertEqual(registration["palette"]["states"], {
+            "thinking": "#eab308", "waitingPermission": "#ef4444",
+            "done": "#22c55e", "idle": "#6b7280"})
+
+    def test_mock_v12_registration_errors(self):
+        client = self.client()
+        cases = [
+            ({"name": "Invalid", "palette": {"baseHue": 150, "states": {}}}, "palette.states"),
+            ({"name": "Invalid", "palette": {"baseHue": 150,
+                                             "states": {"error": "#ff0000"}}}, "palette.states.error"),
+            ({"name": "Invalid", "palette": {"baseHue": 150},
+              "icon": {"appBundleId": "no-dot"}}, "icon.appBundleId"),
+            ({"name": "Invalid", "palette": {"baseHue": 150},
+              "icon": {"png": "AAAA"}}, "icon.png"),
+        ]
+        for body, field in cases:
+            with self.subTest(field=field):
+                status, error, _ = client.call("PUT", "/adapters/dev.example.invalid", body)
+                self.assertEqual(status, 422)
+                self.assertEqual(error["code"], "invalid_field")
+                self.assertEqual(error["field"], field)
+                self.assertNotIn("dev.example.invalid", mock.adapters)
+
+    def test_python_project_merge_and_null_clear(self):
+        client = self.client()
+        self.assertEqual(client.session("s1", title="Job", activity="thinking", host="jobs-vm",
+                                        cwd="/work/jobs", project="Customer jobs")[0], 200)
+        self.assertEqual(client.session("s1", activity="done")[0], 200)
+        self.assertEqual(mock.sessions[ref.ADAPTER]["s1"]["project"], "Customer jobs")
+        self.assertEqual(client.session("s1", project=None)[0], 200)
+        self.assertEqual(mock.sessions[ref.ADAPTER]["s1"], {
+            "title": "Job", "activity": "done", "host": "jobs-vm", "cwd": "/work/jobs"})
+
+    def test_python_events_demo_applies_once_and_acknowledges(self):
+        mock.DEMO_EVENTS = True
+        result = self.run_client([sys.executable, str(EXAMPLES / "ref.py"), "--events"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prefix = "authoritative toy UI applied "
+        events = [json.loads(line[len(prefix):]) for line in result.stdout.splitlines()
+                  if line.startswith(prefix)]
+        self.assertEqual([event["type"] for event in events], ["tap", "approval", "tap", "question"])
+        self.assertEqual([event["sequence"] for event in events], [1, 2, 3, 4])
+        self.assertEqual(events[1]["decision"], "deny")
+        self.assertEqual(events[3]["picks"], [[0]])
+        polls = [record[2] for record in self.records if record[1].endswith("/events")]
+        self.assertEqual(polls, [{"after": 0, "ack": 0, "waitSeconds": 2},
+                                 {"after": 2, "ack": 2, "waitSeconds": 2},
+                                 {"after": 4, "ack": 4, "waitSeconds": 0}])
+        self.assertEqual(mock.EVENTS.adapters[ref.ADAPTER]["ack"], 4)
+        self.assertEqual(mock.sessions[ref.ADAPTER], {})
+        self.assertTrue(all(record[3] < 400 for record in self.records))
+
+    def test_python_events_wait_for_allow_and_denial(self):
+        client = ref.Orbtile(events=True)
+        replies = iter([(200, {"enabled": False, "reason": "awaiting_user"}, {}),
+                        (200, {"enabled": True}, {})])
+        with mocklib.patch.object(client, "call", side_effect=lambda *args, **kwargs: next(replies)) as call:
+            with mocklib.patch.object(ref.time, "sleep", return_value=None):
+                client.wait_until_enabled(timeout=2)
+        self.assertEqual(call.call_count, 2)
+        for invocation in call.call_args_list:
+            self.assertEqual(invocation.args[:2], ("PUT", "/adapters/" + ref.ADAPTER))
+            self.assertEqual(invocation.args[2]["capabilities"], ["tap", "approvals", "questions"])
+        with mocklib.patch.object(client, "call", return_value=(
+                200, {"enabled": False, "reason": "disabled_by_user"}, {})):
+            with self.assertRaises(SystemExit):
+                client.wait_until_enabled(timeout=2)
 
     def test_python_complete_demo(self):
         result = self.run_client([sys.executable, str(EXAMPLES / "ref.py")])
@@ -210,17 +290,19 @@ class AdapterTests(unittest.TestCase):
         self.assertGreaterEqual(len(running), 2)
         self.assertEqual(list(mock.sessions["dev.example.shell"].values())[-1]["activity"], "done")
 
-    def run_node_ticks(self):
+    def run_node_ticks(self, env=None):
         script = '''let tick;
 globalThis.setInterval = (f) => { tick = f; return 0; };
 await import(process.argv[1]);
 await tick();
 await tick();'''
         result = self.run_client(["node", "--input-type=module", "-e", script,
-                                  (EXAMPLES / "ref.mjs").as_uri()])
+                                  (EXAMPLES / "ref.mjs").as_uri()], env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.wait_for(lambda: mock.sessions.get("dev.example.node", {}).get("job-42") is not None)
         self.assertEqual(mock.sessions["dev.example.node"]["job-42"]["activity"], "tool")
+        self.assertNotIn("icon", mock.adapters["dev.example.node"])
+        self.assertNotIn("states", mock.adapters["dev.example.node"]["palette"])
 
     def test_node_poller_full_replace(self):
         self.run_node_ticks()
@@ -234,6 +316,34 @@ await tick();'''
         self.assertIn(401, [r[3] for r in self.records])
         self.assertIn(404, [r[3] for r in self.records])
         self.assertEqual(len(mock.sessions["dev.example.node"]), 1)
+
+    def enterprise_discovery_env(self):
+        home = Path("enterprise-home").resolve()
+        directory = home / "Library" / "Application Support" / "Orbtile Enterprise"
+        directory.mkdir(parents=True)
+        discovery = directory / "adapter-api.json"
+        discovery.write_text(self.discovery.read_text())
+        discovery.chmod(0o600)
+        env = dict(self.env, HOME=str(home))
+        env.pop("ORBTILE_API_FILE", None)
+        return env
+
+    def test_enterprise_discovery_fallback_for_all_clients(self):
+        env = self.enterprise_discovery_env()
+        expected = Path(env["HOME"]) / "Library" / "Application Support" / "Orbtile Enterprise" / "adapter-api.json"
+        script = ("import sys; sys.path.insert(0, " + repr(str(EXAMPLES)) + "); import ref; "
+                  "assert ref.API_FILE == " + repr(str(expected)) + "; "
+                  "client = ref.Orbtile(); client.verify(); client.register()")
+        result = self.run_client([sys.executable, "-c", script], env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_client(["bash", str(EXAMPLES / "ref-shell.sh"),
+                                  "sh", "-c", "exit 0"], env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("icon", mock.adapters["dev.example.shell"])
+        self.assertNotIn("states", mock.adapters["dev.example.shell"]["palette"])
+        self.run_node_ticks(env=env)
+        self.assertEqual(set(mock.adapters), {ref.ADAPTER, "dev.example.shell", "dev.example.node"})
+        self.assertTrue(all(record[3] < 400 for record in self.records))
 
     def test_mock_refuses_unregistered_and_unsafe_url_schemes(self):
         client = self.client()
