@@ -25,6 +25,8 @@ class Fake:
         self.owner = 'owner-secret'
         self.registered = False
         self.bad_proof = False
+        self.api_minor = 1
+        self.registration_warnings = None
         self.cursor = 0
         self.delivered = 0
         fake = self
@@ -55,13 +57,15 @@ class Fake:
                     status, reply = 401, {'error': {'code': 'unauthorized', 'message': fake.token}}
                 elif self.path.endswith('/info'):
                     nonce = self.headers['X-Orbtile-Nonce']
-                    reply = {'api': 1, 'apiMinor': 1, 'proof': ('invalid-proof' if fake.bad_proof else hmac.new(fake.token.encode(), nonce.encode(), hashlib.sha256).hexdigest())}
+                    reply = {'api': 1, 'apiMinor': fake.api_minor, 'proof': ('invalid-proof' if fake.bad_proof else hmac.new(fake.token.encode(), nonce.encode(), hashlib.sha256).hexdigest())}
                 elif self.command == 'PUT' and self.path == '/a/v1/adapters/dev.example.test':
                     if fake.registered:
                         assert self.headers['X-Orbtile-Adapter-Token'] == fake.owner
                     fake.registered = True
                     status = 201
                     reply = {'adapter': {'id': 'dev.example.test'}, 'enabled': True, 'adapterToken': fake.owner}
+                    if fake.registration_warnings is not None:
+                        reply['warnings'] = fake.registration_warnings
                 elif not fake.registered:
                     status, reply = 404, {'error': {'code': 'adapter_not_registered'}}
                 else:
@@ -315,6 +319,58 @@ class SDKTests(unittest.TestCase):
             self.assertFalse(client.answer_locally('s', lambda: self.fail('Retired request must not commit')))
             with self.assertRaises(ValueError):
                 client.request_approval('s', approval)
+
+    def test_v12_registration_passes_icon_and_palette_states_unchanged(self):
+        registration = {
+            'name': 'Test',
+            'palette': {'baseHue': 150, 'states': {'thinking': '#A1b2C3', 'waitingPermission': '#d4E5f6'}},
+            'icon': {'png': 'aGVsbG8=', 'appBundleId': 'com.example.agent'},
+        }
+        with Fake() as fake, Client('dev.example.test', registration, discovery_file=fake.path):
+            self.assertEqual(fake.calls[-1][2], registration)
+
+    def test_v12_registration_sends_explicit_nulls(self):
+        registration = {'name': 'Test', 'palette': {'baseHue': 150, 'states': None}, 'icon': None}
+        with Fake() as fake, Client('dev.example.test', registration, discovery_file=fake.path):
+            body = fake.calls[-1][2]
+            self.assertIn('icon', body)
+            self.assertIsNone(body['icon'])
+            self.assertIn('states', body['palette'])
+            self.assertIsNone(body['palette']['states'])
+            self.assertEqual(body, registration)
+
+    def test_v12_fields_register_on_api_v1_1_and_preserve_warnings(self):
+        with Fake() as fake, fake.client() as client:
+            warnings = ["unknown field 'icon' ignored", "unknown field 'palette.states' ignored"]
+            fake.registration_warnings = warnings
+            client.registration = {
+                **client.registration,
+                'palette': {**client.registration['palette'], 'states': {'thinking': '#a1b2c3'}},
+                'icon': {'appBundleId': 'com.example.agent'},
+            }
+            reply = client.register()
+            self.assertEqual(client.info['apiMinor'], 1)
+            self.assertEqual(fake.calls[-1][2], client.registration)
+            self.assertEqual(reply['warnings'], warnings)
+
+    def test_v12_icon_only_descriptor_change_retires_pending(self):
+        with Fake() as fake, fake.client() as client:
+            client.request_approval('s', {'id': 'a1', 'toolName': 'Read', 'commandSummary': 'README'}, title='Demo')
+            client.registration['icon'] = {'appBundleId': 'com.example.agent'}
+            client.register()
+            self.assertEqual(len(client._pending), 0)
+            self.assertTrue(client.reconciliation_required)
+
+    def test_v12_palette_states_only_descriptor_change_retires_pending(self):
+        with Fake() as fake, fake.client() as client:
+            client.request_approval('s', {'id': 'a1', 'toolName': 'Read', 'commandSummary': 'README'}, title='Demo')
+            client.registration['palette'] = {
+                **client.registration['palette'],
+                'states': {'waitingPermission': '#d4e5f6'},
+            }
+            client.register()
+            self.assertEqual(len(client._pending), 0)
+            self.assertTrue(client.reconciliation_required)
 
     def test_merge_clear_of_other_kind_preserves_pending_request(self):
         with Fake() as fake, fake.client() as client:

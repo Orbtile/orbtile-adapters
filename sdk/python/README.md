@@ -1,8 +1,13 @@
 # orbtile-adapter
 
-Send your own tool's status to Orbtile: a dependency-free client for Orbtile Adapter API v1.1.
+Send your own tool's status to Orbtile: a dependency-free client for Orbtile Adapter API v1.2.
 
-Version 0.1.0 · Python 3.10+ · stdlib runtime only · MIT. Install with `python3 -m pip install orbtile-adapter`.
+Version 0.2.0 · Python 3.10+ · stdlib runtime only · MIT. Install with `python3 -m pip install orbtile-adapter`.
+
+`icon` and `palette.states` are optional Adapter API v1.2 registration fields, passed through as given;
+`null` clears a custom icon or the state colours. Older Orbtile hosts ignore them with warnings, so check
+`info.apiMinor >= 2` (`info['apiMinor'] >= 2` in Python) before relying on them. Changing either asks the
+user to Allow again. See the [protocol rules](https://github.com/Orbtile/orbtile-adapters/blob/main/protocol/README.md).
 
 ## Ten-line quick start
 

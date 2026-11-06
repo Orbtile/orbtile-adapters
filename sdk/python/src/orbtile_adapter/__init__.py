@@ -1,4 +1,4 @@
-"""Dependency-free Orbtile Adapter API v1.1 clients for Unix sockets and Windows loopback HTTP."""
+"""Dependency-free Orbtile Adapter API v1.2 clients for Unix sockets and Windows loopback HTTP."""
 import asyncio
 import copy
 import hashlib
@@ -16,7 +16,25 @@ import time
 from typing import TypedDict
 from urllib.parse import quote
 
-__version__ = '0.1.0'
+__version__ = '0.2.0'
+
+
+class AdapterIcon(TypedDict, total=False):
+    png: str
+    appBundleId: str
+
+
+class PaletteStates(TypedDict, total=False):
+    idle: str
+    starting: str
+    thinking: str
+    tool: str
+    streaming: str
+    done: str
+    compacting: str
+    offline: str
+    waitingPermission: str
+    waitingQuestion: str
 
 
 class SessionUpdate(TypedDict, total=False):
@@ -263,7 +281,7 @@ class Client:
         with self._lock:
             previous = self._adapter_token
             descriptor = {field: copy.deepcopy(self.registration.get(field)) for field in
-                          ('name', 'shortName', 'palette', 'urlSchemes', 'homepage', 'capabilities', 'tapBehavior')}
+                          ('name', 'shortName', 'palette', 'icon', 'urlSchemes', 'homepage', 'capabilities', 'tapBehavior')}
             changed = self._registered_descriptor is not None and descriptor != self._registered_descriptor
             reply = self._request('PUT', self._path(), self.registration)
             token = reply.get('adapterToken')
