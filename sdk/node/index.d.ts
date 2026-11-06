@@ -11,17 +11,35 @@ export type Activity =
   | "compacting"
   | "offline";
 export type Capability = "tap" | "approvals" | "questions";
+export type PaletteState =
+  | "idle"
+  | "starting"
+  | "thinking"
+  | "tool"
+  | "streaming"
+  | "done"
+  | "compacting"
+  | "offline"
+  | "waitingPermission"
+  | "waitingQuestion";
+export type PaletteStates = Partial<Record<PaletteState, string>>;
+export interface AdapterIcon {
+  png?: string;
+  appBundleId?: string;
+}
 export interface Palette {
   baseHue: number;
   attentionHue?: number;
   chroma?: number;
   lightness?: number;
+  states?: PaletteStates | null;
 }
 export interface Registration {
   name: string;
   shortName?: string;
   palette: Palette;
   glyph?: { symbol?: string; monogram?: string };
+  icon?: AdapterIcon | null;
   version?: string;
   homepage?: string;
   urlSchemes?: string[];

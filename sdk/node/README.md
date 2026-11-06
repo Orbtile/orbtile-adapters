@@ -1,8 +1,13 @@
 # @orbtile/adapter
 
-Send your own tool's status to Orbtile: a dependency-free client for Orbtile Adapter API v1.1.
+Send your own tool's status to Orbtile: a dependency-free client for Orbtile Adapter API v1.2.
 
-Version 0.1.0. Node >=20, ESM, TypeScript declarations, no runtime dependencies. Implements Adapter API v1.1 using HTTP over the discovered Unix socket on macOS or loopback TCP address on Windows. Enable Orbtile's Adapter API and allow your adapter in Settings > Agents. Keypad decisions require a separate user opt-in.
+Version 0.2.0. Node >=20, ESM, TypeScript declarations, no runtime dependencies. Implements Adapter API v1.2 using HTTP over the discovered Unix socket on macOS or loopback TCP address on Windows. Enable Orbtile's Adapter API and allow your adapter in Settings > Agents. Keypad decisions require a separate user opt-in.
+
+`icon` and `palette.states` are optional Adapter API v1.2 registration fields, passed through as given;
+`null` clears a custom icon or the state colours. Older Orbtile hosts ignore them with warnings, so check
+`info.apiMinor >= 2` before relying on them. Changing either asks the user to Allow again. See the
+[protocol rules](https://github.com/Orbtile/orbtile-adapters/blob/main/protocol/README.md).
 
 ## Quick start
 

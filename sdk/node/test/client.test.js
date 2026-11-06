@@ -19,6 +19,7 @@ async function fixture(t, options = {}) {
     highest: 0,
     ack: 0,
     badProof: false,
+    apiMinor: 1,
   };
   const server = http.createServer(async (req, res) => {
     let raw = "";
@@ -43,7 +44,7 @@ async function fixture(t, options = {}) {
     if (req.url.endsWith("/info"))
       return reply(200, {
         api: 1,
-        apiMinor: 1,
+        apiMinor: state.apiMinor,
         proof: createHmac("sha256", state.badProof ? "wrong" : state.token)
           .update(req.headers["x-orbtile-nonce"])
           .digest("hex"),
@@ -56,6 +57,7 @@ async function fixture(t, options = {}) {
         enabled: true,
         adapter: { id: "dev.test" },
         adapterToken: state.owner,
+        warnings: state.registrationWarnings,
       });
     }
     if (!state.registered)
@@ -405,6 +407,84 @@ test("mutating registration descriptor still retires pending prompts on successf
   assert.equal(c.history.has("a"), true);
 });
 
+test("v1.2 registration passes icon and palette.states through unchanged", async (t) => {
+  const registration = {
+    name: "Test",
+    palette: {
+      baseHue: 150,
+      states: { thinking: "#A1b2C3", waitingPermission: "#d4E5f6" },
+    },
+    icon: { png: "aGVsbG8=", appBundleId: "com.example.agent" },
+  };
+  const { calls } = await fixture(t, { registration });
+  assert.deepEqual(calls.at(-1).body, registration);
+});
+
+test("v1.2 registration sends explicit null icon and palette.states", async (t) => {
+  const registration = {
+    name: "Test",
+    palette: { baseHue: 150, states: null },
+    icon: null,
+  };
+  const { calls } = await fixture(t, { registration });
+  assert.equal(calls.at(-1).body.icon, null);
+  assert.equal(calls.at(-1).body.palette.states, null);
+  assert.deepEqual(calls.at(-1).body, registration);
+});
+
+test("v1.2 fields register on API v1.1 and preserve warnings", async (t) => {
+  const { c, calls, state } = await fixture(t);
+  const warnings = [
+    "unknown field 'icon' ignored",
+    "unknown field 'palette.states' ignored",
+  ];
+  state.registrationWarnings = warnings;
+  const registration = {
+    ...c.registration,
+    palette: {
+      ...c.registration.palette,
+      states: { thinking: "#a1b2c3" },
+    },
+    icon: { appBundleId: "com.example.agent" },
+  };
+  const reply = await c.register(registration);
+  assert.equal(c.info.apiMinor, 1);
+  assert.deepEqual(calls.at(-1).body, registration);
+  assert.deepEqual(reply.warnings, warnings);
+});
+
+test("v1.2 icon-only descriptor change retires pending prompts", async (t) => {
+  const { c } = await fixture(t);
+  await c.requestApproval(
+    "s",
+    { id: "a", toolName: "Shell", commandSummary: "Check" },
+    { title: "S" },
+  );
+  await c.register({
+    ...c.registration,
+    icon: { appBundleId: "com.example.agent" },
+  });
+  assert.equal(c.pending.size, 0);
+  assert.equal(c.reconciliationRequired, true);
+});
+
+test("v1.2 palette.states-only descriptor change retires pending prompts", async (t) => {
+  const { c } = await fixture(t);
+  await c.requestApproval(
+    "s",
+    { id: "a", toolName: "Shell", commandSummary: "Check" },
+    { title: "S" },
+  );
+  await c.register({
+    ...c.registration,
+    palette: {
+      ...c.registration.palette,
+      states: { waitingPermission: "#d4e5f6" },
+    },
+  });
+  assert.equal(c.pending.size, 0);
+  assert.equal(c.reconciliationRequired, true);
+});
 
 test("project merges, null clears and batches preserve the field", async (t) => {
   const { c, calls, rotate } = await fixture(t);

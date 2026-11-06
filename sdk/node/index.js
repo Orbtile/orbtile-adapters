@@ -216,6 +216,7 @@ export class AdapterClient {
           "name",
           "shortName",
           "palette",
+          "icon",
           "urlSchemes",
           "homepage",
           "capabilities",

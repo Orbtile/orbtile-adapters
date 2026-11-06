@@ -1,6 +1,6 @@
 {
   "name": "@orbtile/adapter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Dependency-free local Orbtile Adapter API client",
   "type": "module",
   "main": "./index.js",
