@@ -72,3 +72,16 @@ jobs:
       - name: Publish
         working-directory: sdk/node
         run: npm publish --provenance --access public
+      # A failed npm publish stays in this job: PyPI and the Orbtile app release run separately.
+      - name: Explain a failed npm publish
+        if: failure()
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "::error title=npm publish failed::$TAG was not published to npm; see the job summary for the fix."
+          {
+            echo "### npm publish for $TAG failed"
+            echo "Only this npm job failed. PyPI (python-v* tags) and the Orbtile app release run separately and are not affected."
+            echo "If the Publish step shows an authentication, 403/404 or trusted-publishing (OIDC) error, the npm trusted publisher for @orbtile/adapter has expired or no longer matches this workflow."
+            echo "Fix: on a Mac signed in to npm, run \`npm trust github @orbtile/adapter --file publish.yml --repository Orbtile/orbtile-adapters --environment npm --allow-publish --yes\` (one 2FA approval), then re-run this failed job. Keep the tag as it is."
+          } >> "$GITHUB_STEP_SUMMARY"
