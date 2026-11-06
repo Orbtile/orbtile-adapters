@@ -1,0 +1,40 @@
+{
+  "name": "@orbtile/adapter",
+  "version": "0.1.0",
+  "description": "Dependency-free local Orbtile Adapter API client",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE",
+    "examples"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Orbtile/orbtile-adapters.git",
+    "directory": "sdk/node"
+  },
+  "homepage": "https://orbtile.com/adapters",
+  "bugs": {
+    "url": "https://github.com/Orbtile/orbtile-adapters/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

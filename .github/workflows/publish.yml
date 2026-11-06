@@ -1,0 +1,74 @@
+name: Publish SDKs
+
+# One SDK per tag push: python-vX.Y.Z publishes orbtile-adapter to PyPI, node-vX.Y.Z publishes
+# @orbtile/adapter to npm. Both use trusted publishing (GitHub OIDC): no registry token is stored here.
+on:
+  push:
+    tags:
+      - 'python-v*'
+      - 'node-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    if: startsWith(github.ref_name, 'python-v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tag matches the package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("sdk/python/pyproject.toml", "rb"))["project"]["version"])')"
+          test "python-v$version" = "$TAG" || { echo "tag $TAG does not match pyproject version $version" >&2; exit 1; }
+      - name: Test
+        working-directory: sdk/python
+        run: PYTHONPATH=src python -m unittest discover -s tests
+      - name: Build
+        run: |
+          python -m pip install --upgrade build
+          python -m build sdk/python --outdir dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  npm:
+    if: startsWith(github.ref_name, 'node-v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: npm with trusted publishing (11.5.1 or later)
+        run: npm install -g npm@11 && npm --version
+      - name: Tag matches the package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(node -p 'require("./sdk/node/package.json").version')"
+          test "node-v$version" = "$TAG" || { echo "tag $TAG does not match package.json version $version" >&2; exit 1; }
+      - name: Test
+        working-directory: sdk/node
+        run: node --test test/client.test.js
+      - name: Publish
+        working-directory: sdk/node
+        run: npm publish --provenance --access public

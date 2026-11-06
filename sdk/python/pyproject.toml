@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbtile-adapter"
+version = "0.1.0"
+description = "Dependency-free sync and asyncio clients for the Orbtile Adapter API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Orbtile contributors"}]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Operating System :: MacOS",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://orbtile.com/adapters"
+Source = "https://github.com/Orbtile/orbtile-adapters"
+Issues = "https://github.com/Orbtile/orbtile-adapters/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+orbtile_adapter = ["py.typed"]
